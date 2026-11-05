@@ -13,7 +13,7 @@ import {
  * `agent/lib/github/repo-sandbox.ts`. The clone and setup run once per
  * session. The analyst only reads; its instructions forbid modification.
  */
-export const environment = createFactoryEnvironment();
+export const environment = createFactoryEnvironment("station");
 
 export default defineSandbox(async () => {
   const sandbox = await environment.open();

@@ -10,3 +10,7 @@ allowBuilds:
 
 minimumReleaseAgeExclude:
   - eve@1.0.0-rc.5
+
+ignoredOptionalDependencies:
+  - "@mongodb-js/zstd"
+  - "node-liblzma"

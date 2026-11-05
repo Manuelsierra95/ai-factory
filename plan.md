@@ -28,6 +28,7 @@
 | v0.3 | 2026-11-05 | Capa de skills desde rsc-harness; `idea-refinement`, `clarify`, `analyze`, `decision-challenge`, `decision-records`, `constitution`; estados `REFINING`/`CHALLENGING`/`COMPACTING`; fases ampliadas; D18–D21 |
 | v0.4 | 2026-11-05 | Iteración continua (§3.6), eliminación de los modos, `Spec` como documento vivo, desafío de dirección (§11.5), `## Decisiones autónomas`, `maxIterations`, `ia-factory continue`; D22–D24 |
 | **v0.5** | **2026-11-05** | **Correcciones tras verificar el plan contra eve, rsc-harness, OKF y el repo real.**  · **eve `1.0.0-rc.5`** (con la lista de migraciones desde `0.67.2`) · **Zod como fuente de verdad** de los contratos, puente `z.toJSONSchema()` · **e2e (Playwright)** como suite del repo destino, con contrato AC→título de test y `verify_tdd` por `--grep` · **Skills: `sdd` no existe** → `asdd` (sucesor renombrado); `sdd-init`, `plan`, `tasks` y `ftd` añadidos (34 en total); **`sdd-spec`/`tdd-workflow`/`okf-brain` no vienen del template** → se escriben 2 y `sdd-spec` se sustituye por `asdd` · **Sandbox: volumen compartido read-only** (D29) · **Desafío de decisión ejecutado en `run_gatekeeper.ts`** (D28) · **OKF v0.2** canónica: `generated: {by, at}`, `status: draft\|stable\|deprecated` (D31) · **Linter/TS unificados** en eslint+prettier+TS5+turbo (D26) · **Fase 0.5 (Fundación)** nueva: runner e2e, CI, contrato de checks, remote de GitHub · Side effects de git/BRAIN en **`"use step"`** (regla de eve) · Correcciones de contradicciones internas (lane/idea, `GATEKEEPING → ITERATING`, typo de sección, árbol duplicado, Fase 0 sin `vercel link`, `agent/sandbox/sandbox.ts`) · Decisiones **D25–D31** cerradas |
+| **v0.8** | **2026-11-05** | **Provider Docker propio (D1 y D29 implementados).** · `defineSandboxProvider` en `agent/lib/sandbox/provider.ts`: contenedor por sesión de estación, nombre derivado **solo** del id de sesión, labels `ia-factory.managed/role/task-id/sandbox-id/session-id/created-at/volume` · **Volumen compartido por tarea** montado en `/workspace/repo`: el builder lo escribe (`rw`), el resto lo lee (`ro`) → 1 clone + 1 install por tarea · **Credencial GitHub por env de comando** (`GIT_CONFIG_COUNT/KEY/VALUE` con `http.https://github.com/.extraheader`), nunca en la línea de comandos ni en la imagen · **Registro de tareas** en `.factory/tasks/<taskId>.json` (heartbeat + estado) porque las labels de Docker son inmutables · **Janitor**: solo toca recursos con `ia-factory.managed=true`, nunca barre una tarea viva, y respeta los volúmenes que aún tienen contenedores · Plantilla propia por `docker commit` (`iaf-tpl-*`) · Tests contra Docker real (labels, comandos, ficheros, idempotencia del cleanup, volumen compartido, montage de solo lectura) · `pnpm factory:up` valida Docker y `.env.local` antes de arrancar |
 | **v0.7** | **2026-11-05** | **Fase 0 ejecutada.** · App `apps/ia-factory` sobre **eve `1.0.0-rc.5`**: migración de la API (compaction `threshold`, `limits.sessionUsage`, `defineInstructions({content})`, `ctx.agent().send().result()`), `modelContextWindowTokens` por estación (las instancias de proveedor directo no están en el catálogo del Gateway) · **Sandbox Docker local** (provider de eve) en lugar de Vercel Sandbox; credencial GitHub por **env de comando** (`GIT_CONFIG_*`), nunca en la línea de comandos ni en la imagen · **Fuera Vercel Connect**: credenciales propias (PAT o GitHub App con installation token) · **Fuera la extensión `@github-tools/eve-extension`** (importa `@vercel/connect` de forma dura): Fase 6 escribe un cliente REST propio · `FACTORY_REPO` se resuelve en el uso, no al cargar el módulo, para que `eve build`/`eve info` funcionen sin entorno · `factory.config.ts` con el contrato de `checks` (D37: instalación por sesión) · Plantilla de skills: solo `writing-quality` (el resto llega en Fase 2) · **Desviación de la §5**: las estaciones del template siguen vivas hasta la Fase 3-5 |
 | **v0.6** | **2026-11-05** | **Cierre de D34–D37 y repo de destino.** · **Repo:** <https://github.com/Manuelsierra95/ai-factory> · **D34:** Playwright con **solo `chromium`** headless · **D35:** los tests e2e viven en **`packages/tests/`** (workspace `@workspace/tests`), no en `e2e/` raíz · **D36:** los analysers UI/UX **reutilizan la misma instalación y el mismo `webServer`** · **D37:** la instalación (`pnpm install`) es **por sesión**, en el volumen compartido (`checks.setup`), nunca en `prepare` |
 
@@ -55,7 +56,7 @@ Construir una **fábrica de software con IA** dentro del monorepo, como app `app
 | Fase | Estado |
 |---|---|
 | **Fase 0.5** | **Hecha.** Suite e2e (Playwright, solo chromium) en `packages/tests` con el contrato `AC-<n> · <descripción>`; CI (lint + typecheck + e2e); remote de GitHub publicado; lint/TS unificados (eslint + prettier + TS 5 + turbo) |
-| **Fase 0** | **Hecha en lo estructural.** App en `apps/ia-factory` sobre eve `1.0.0-rc.5`, compilada, con sandbox Docker local, credenciales propias y `factory.config.ts`. **Pendiente**: provider Docker propio con labels/TTL/janitor/volumen compartido (D29), imagen del sandbox con Playwright y sin sudo, y `pnpm factory:up` |
+| **Fase 0** | **Hecha.** App en `apps/ia-factory` sobre eve `1.0.0-rc.5`, compilada; **provider Docker propio** con labels, TTL, heartbeat, janitor y volumen compartido (D29); credenciales propias; `factory.config.ts`; `pnpm factory:up`. **Pendiente**: imagen del sandbox con Playwright y sin sudo (§3.5.1), y las tools de GitHub propias de la Fase 6 |
 | Fases 1-7 | Pendientes |
 
 ### 1.2 Fuera de alcance (v1)
@@ -209,6 +210,24 @@ El estado se guarda en el estado durable de la sesión eve (`defineState`), no e
 La eliminación automática es un requisito funcional, no una optimización: ningún contenedor sandbox debe permanecer activo después de que su tarea haya terminado y se hayan persistido sus resultados.
 
 > **Nota de eve (verificada):** eve ya llama al `stop()`/`onSessionEnd()` del provider cuando termina la sesión. El provider custom implementa ese `stop()` como la eliminación real del contenedor y del volumen; laroutine de cleanup de la fábrica añade idempotencia, labels, TTL y janitor.
+
+### 3.5.1 Cómo está implementado (2026-11-05)
+
+| Pieza | Fichero | Qué hace |
+|---|---|---|
+| Provider | `agent/lib/sandbox/provider.ts` | `defineSandboxProvider`: `prepare` (plantilla propia por `docker commit`), `start` (contenedor + volumen), `resume`, `onSessionEnd` |
+| Cliente Docker | `agent/lib/sandbox/docker-cli.ts` | `docker` / `dockerOrThrow` / `dockerProcess`, siempre como lista de argumentos, nunca una cadena de shell |
+| Nombres y labels | `agent/lib/sandbox/labels.ts` | `ia-factory.managed`, `.role`, `.task-id`, `.sandbox-id`, `.session-id`, `.created-at`, `.volume` |
+| Registro | `agent/lib/sandbox/registry.ts` | `.factory/tasks/<taskId>.json`: estado y heartbeat. Las labels de Docker son inmutables, así que el heartbeat vive aquí |
+| Janitor | `agent/lib/sandbox/janitor.ts` | Barre contenedores y volúmenes expirados. Solo toca recursos con `ia-factory.managed=true`, nunca una tarea viva, y no arranca volúmenes con contenedores encima |
+| Barrido manual | `agent/tools/sweep_sandboxes.ts` | Tool del raíz que llama al janitor |
+
+**Decisiones de implementación que conviene conocer:**
+
+- **El nombre del contenedor sale solo del id de sesión** (`iaf-sbx-<hash>`), nunca de las opciones ni del artefacto: dos llamadas que abren la misma sesión llegan al mismo contenedor, incluso desde procesos distintos.
+- **El comando viaja en una variable de entorno**, no en la lista de argumentos: `IAF_COMMAND`, más un `exec -a "iaf-exec-$IAF_EXEC_TOKEN"` que da al proceso un `argv[0]` reconocible. Así `kill` puede matarlo dentro del contenedor (matar el cliente `docker exec` no basta) y ninguna regla de comillas puede cambiar el sentido del comando.
+- **El volumen es de la tarea, no de la sesión**: sobrevive mientras la tarea trabaja y el janitor lo retira cuando la tarea termina. El pipeline fija `FACTORY_TASK_ID` para todas las estaciones de la misma tarea; sin él, cada sandbox tiene su propio volumen (que es el default seguro: dos tareas nunca comparten directorio).
+- **El montaje de solo lectura no es negociable**: un analyser que puede escribir el diff que juzga no está juzgando nada. El test lo comprueba.
 
 ### 3.6 Iteración continua: una fábrica, sin modos
 

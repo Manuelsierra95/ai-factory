@@ -1,15 +1,14 @@
-import type { DockerSandboxSession } from "eve/sandbox/docker";
-import { DockerSandbox } from "eve/sandbox/docker";
-import { requireFactoryRepo } from "../constants.js";
+import type { SandboxSession } from "eve/sandbox";
+import { IaFactorySandbox } from "../sandbox/provider.js";
 import {
   appAccessMessage,
   describeCloneFailure,
   safeErrorMessage,
   sanitizeCommandOutput,
-} from "./bootstrap-diagnostics.js";
-import { FALLBACK_BOT_NAME, resolveBotName } from "./bot-name.js";
-import { resolveGitHubToken } from "./credentials.js";
-import { gitAuthEnv, remoteUrl } from "./git-remote.js";
+} from "../github/bootstrap-diagnostics.js";
+import { FALLBACK_BOT_NAME, resolveBotName } from "../github/bot-name.js";
+import { resolveGitHubToken } from "../github/credentials.js";
+import { gitAuthEnv, remoteUrl } from "../github/git-remote.js";
 
 /**
  * Image every station sandbox runs.
@@ -24,18 +23,19 @@ export const FACTORY_SANDBOX_IMAGE =
   process.env.FACTORY_SANDBOX_IMAGE ?? undefined;
 
 /**
- * Creates a station's Docker environment.
+ * Creates a station's sandbox environment.
  *
  * @remarks
- * Each station calls this from its own `sandbox.ts`, so the environment's
- * generation is keyed to that file. Docker has no snapshot: every session
- * starts a container from the base image, which is why the shared checkout
- * lives in a volume instead of in the image.
+ * Every station of a task mounts the same volume at `/workspace/repo`, so
+ * the checkout happens once and the install happens once. Only the builder
+ * mounts it writable; the others see it read-only, which is what keeps a
+ * reviewer from editing the diff it is judging.
  */
-export function createFactoryEnvironment() {
-  return DockerSandbox.environment({
+export function createFactoryEnvironment(role: "builder" | "analyser" | "station" = "station") {
+  return IaFactorySandbox.environment({
+    role,
     ...(FACTORY_SANDBOX_IMAGE ? { image: FACTORY_SANDBOX_IMAGE } : {}),
-    pullPolicy: "if-not-present",
+    volumeMode: role === "builder" ? "rw" : "ro",
   });
 }
 
@@ -45,7 +45,7 @@ export function createFactoryEnvironment() {
  * out repository behind.
  */
 async function runOrThrow(
-  sandbox: DockerSandboxSession,
+  sandbox: SandboxSession,
   command: string,
   env?: Record<string, string>,
 ): Promise<void> {
@@ -81,27 +81,41 @@ async function gitIdentity(): Promise<{ email: string; name: string }> {
 
 /**
  * Session-scoped setup shared by the station sandboxes: fix git's ownership
- * check, set the bot's commit identity, and clone the factory repository.
+ * check and set the bot's commit identity.
  *
  * @remarks
+ * The clone itself is the builder's job, not every station's: the builder
+ * populates the shared volume, and the other stations read it. That is what
+ * makes one clone and one install per task the rule instead of the
+ * exception.
+ *
  * The credential travels as a per-command environment variable, scoped to
  * `github.com` by git's own config, so it never appears in the command line
- * and never reaches another host. It is not baked into the image.
- *
- * The template snapshot is owned by the builder uid, not the session user;
- * without the `safe.directory` entries every git command dies on "dubious
- * ownership".
+ * and never reaches another host.
  */
 export async function factoryInit(
-  sandbox: DockerSandboxSession,
+  sandbox: SandboxSession,
 ): Promise<void> {
   const identity = await gitIdentity();
   await runOrThrow(
     sandbox,
     `git config --global --add safe.directory /workspace && git config --global --add safe.directory /workspace/repo && git config --global user.name "${identity.name}" && git config --global user.email "${identity.email}"`,
   );
+}
+
+/**
+ * Clones the factory repository into the shared volume and runs the setup
+ * command.
+ *
+ * @remarks
+ * Only the builder calls this. The token is resolved once, here, and handed
+ * to git as the environment of the clone command.
+ */
+export async function factoryClone(
+  sandbox: SandboxSession,
+): Promise<void> {
   const token = await resolveGitHubToken().catch((error: unknown) => {
-    throw new Error(appAccessMessage(requireFactoryRepo()), { cause: error });
+    throw new Error(appAccessMessage("the configured repository"), { cause: error });
   });
   try {
     await runOrThrow(
@@ -111,7 +125,7 @@ export async function factoryInit(
     );
   } catch (error) {
     throw new Error(
-      describeCloneFailure(requireFactoryRepo(), safeErrorMessage(error)),
+      describeCloneFailure("the configured repository", safeErrorMessage(error)),
       { cause: error },
     );
   }

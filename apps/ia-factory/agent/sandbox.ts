@@ -1,24 +1,22 @@
 import { defineSandbox } from "eve/sandbox";
-import { DockerSandbox } from "eve/sandbox/docker";
-import { FACTORY_SANDBOX_IMAGE } from "./lib/github/repo-sandbox.js";
+import { IaFactorySandbox } from "./lib/sandbox/provider.js";
 
 /**
- * Root agent sandbox configuration.
+ * Root agent sandbox.
  *
  * @remarks
  * Local Docker containers, in development and in production alike, so the
- * factory never depends on a hosted sandbox service. `FACTORY_SANDBOX_IMAGE`
- * pins the image; without it, eve's published image is used.
+ * factory never depends on a hosted sandbox service. The provider labels
+ * every container it creates and the janitor removes the ones whose task is
+ * over.
  *
- * The post-open init marks `/workspace` as a safe git directory. The
+ * The post-open init marks `/workspace` as a safe git directory: the
  * container filesystem is owned by the builder uid, not the session user, so
- * without this git aborts every command with "detected dubious ownership in
- * repository at '/workspace'". The station sandboxes handle the same hazard
- * for `/workspace/repo` in `agent/lib/github/repo-sandbox.ts`.
+ * without it git aborts every command with "detected dubious ownership".
  */
-export const environment = DockerSandbox.environment({
-  ...(FACTORY_SANDBOX_IMAGE ? { image: FACTORY_SANDBOX_IMAGE } : {}),
-  pullPolicy: "if-not-present",
+export const environment = IaFactorySandbox.environment({
+  role: "root",
+  volumeMode: "rw",
 });
 
 export default defineSandbox(async () => {

@@ -38,5 +38,8 @@ jobs:
       - name: Typecheck
         run: pnpm typecheck
 
+      - name: Unit tests
+        run: pnpm test
+
       - name: E2E
         run: pnpm e2e

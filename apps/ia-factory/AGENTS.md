@@ -15,7 +15,7 @@ Fase 0 of the plan. The runtime is up and running; the pipeline is not the targe
 | Piece | State |
 |---|---|
 | eve runtime | `1.0.0-rc.5`, compiled, `eve info` reports 0 errors |
-| Sandboxes | Local Docker, one container per station session |
+| Sandboxes | **Provider Docker propio** (`agent/lib/sandbox/provider.ts`): one container per station session, factory labels, shared volume per task, TTL, heartbeat and janitor |
 | Credentials | GitHub PAT (`FACTORY_GITHUB_TOKEN`) or GitHub App (`GITHUB_APP_ID`, `GITHUB_INSTALLATION_ID`, `GITHUB_APP_PRIVATE_KEY`). No Vercel Connect |
 | Models | Provider instances via AI SDK, no AI Gateway. Each station declares its context window, because eve cannot look up a direct provider model in the Gateway catalog |
 | Stations | The template's four (classifier, analyst, implementer, reviewer). Fase 3 to 5 replace them with the Spec Writer, the Builder and the Analysers |
@@ -25,14 +25,30 @@ Fase 0 of the plan. The runtime is up and running; the pipeline is not the targe
 ## Commands
 
 ```bash
-pnpm install                # workspace install
+pnpm install                         # workspace install
+pnpm factory:up                      # checks Docker and .env.local, then eve dev
 pnpm --filter @workspace/ia-factory dev       # eve dev: local TUI
 pnpm --filter @workspace/ia-factory build     # eve build
 pnpm --filter @workspace/ia-factory validate  # lint + typecheck + eve info
+pnpm --filter @workspace/ia-factory test      # vitest (the Docker provider tests)
 pnpm --filter @workspace/ia-factory eval      # eve eval
 ```
 
 `FACTORY_REPO` is required at module load; without it the app fails discovery with a clear message. Copy `.env.example` to `.env.local`.
+
+## The Docker sandbox layer
+
+Everything under `agent/lib/sandbox/` is the factory's own provider, not eve's built-in one.
+
+- **The container name comes from the session id alone.** Two callers that open the same session reach the same container.
+- **Every resource carries `ia-factory.managed=true`.** The janitor only ever touches resources with that label, so it can never remove somebody else's container on the same machine.
+- **The shared volume belongs to the task.** The builder mounts it writable and clones into it; every other station mounts it read-only, so an analyst cannot edit the diff it is judging. One clone and one install per task.
+- **The task id arrives through `FACTORY_TASK_ID`.** The pipeline sets it for every station of the same task. Without it, each sandbox gets its own volume, which is the safe default.
+- **The heartbeat lives in `.factory/tasks/<taskId>.json`,** not in a label: Docker labels are immutable.
+- **Commands travel in the environment, not in the argument list.** `IAF_COMMAND` plus an `exec -a "iaf-exec-$IAF_EXEC_TOKEN"` wrapper, so `kill` can reach the process inside the container and no quoting rule can change what the command means.
+- **The GitHub credential never enters the container.** It is the environment of the one git command that needs it, scoped to `github.com` by git's own config.
+
+The provider is covered by tests that run against the real Docker daemon (`agent/lib/sandbox/provider.test.ts`). They are skipped when Docker is not reachable.
 
 ## eve conventions
 

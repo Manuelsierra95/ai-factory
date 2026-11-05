@@ -13,7 +13,9 @@
     "factory:dev": "pnpm --filter @workspace/ia-factory dev",
     "factory:build": "pnpm --filter @workspace/ia-factory build",
     "factory:info": "pnpm --filter @workspace/ia-factory exec eve info",
-    "factory:validate": "pnpm --filter @workspace/ia-factory validate"
+    "factory:validate": "pnpm --filter @workspace/ia-factory validate",
+    "factory:up": "bash apps/ia-factory/scripts/factory-up.sh",
+    "factory:test": "pnpm --filter @workspace/ia-factory test"
   },
   "devDependencies": {
     "@workspace/eslint-config": "workspace:*",

@@ -15,7 +15,7 @@ import {
  * implementer is deliberate: the reviewer sees the pushed branch, not the
  * implementer's working state.
  */
-export const environment = createFactoryEnvironment();
+export const environment = createFactoryEnvironment("station");
 
 export default defineSandbox(async () => {
   const sandbox = await environment.open();
