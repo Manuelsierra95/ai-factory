@@ -1,4 +1,4 @@
-import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
@@ -127,6 +127,17 @@ export async function markScopeTerminal(
     lastHeartbeatAt: now,
     sandboxes: existing?.sandboxes ?? [],
   });
+}
+
+/**
+ * Forgets a scope.
+ *
+ * @remarks
+ * Called by the janitor once the scope's resources are gone. Without it the
+ * registry would grow one file per task forever.
+ */
+export async function forgetScope(scopeId: string): Promise<void> {
+  await rm(recordPath(scopeId), { force: true });
 }
 
 /**

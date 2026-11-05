@@ -6,7 +6,12 @@ import {
   SANDBOX_LABEL,
   SCOPE_LABEL,
 } from "./labels.js";
-import { listScopes, TERMINAL_STATUSES, type ScopeRecord } from "./registry.js";
+import {
+  forgetScope,
+  listScopes,
+  TERMINAL_STATUSES,
+  type ScopeRecord,
+} from "./registry.js";
 
 /**
  * The sweeper that removes what the factory left behind.
@@ -221,6 +226,24 @@ export async function sweep(
     } else {
       failed.push(`volume ${volume.id}: ${removed.stderr.trim()}`);
     }
+  }
+
+  // A scope that is over, or that has outlived its TTL, and whose resources
+  // are gone, leaves nothing to remember.
+  for (const record of scopes.values()) {
+    if (!isExpired({}, record, ttlMs)) {
+      continue;
+    }
+    const containersLeft = await docker([
+      "ps",
+      "-aq",
+      "--filter",
+      `label=${SCOPE_LABEL}=${record.scopeId}`,
+    ]);
+    if (containersLeft.stdout.trim() !== "") {
+      continue;
+    }
+    await forgetScope(record.scopeId);
   }
 
   for (const message of failed) {
