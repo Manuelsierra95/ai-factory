@@ -21,6 +21,9 @@ const TASK_ID = `test-${Date.now()}`;
 const SESSION_ID = `test-session-${Date.now()}`;
 /** A second station of the same task: it must see the first one's work. */
 const SESSION_ID_2 = `test-session-2-${Date.now()}`;
+/** The stations of the shared-volume test, separate from the first test. */
+const SHARED_SESSION_ID = `test-shared-${Date.now()}`;
+const SHARED_SESSION_ID_2 = `test-shared-2-${Date.now()}`;
 
 async function dockerAvailable(): Promise<boolean> {
   const result = await docker(["info", "--format", "{{.ServerVersion}}"]);
@@ -36,6 +39,8 @@ suite("the Docker sandbox provider", () => {
   afterAll(async () => {
     await docker(["rm", "-f", containerName]);
     await docker(["rm", "-f", sandboxIdFor(SESSION_ID_2)]);
+    await docker(["rm", "-f", sandboxIdFor(SHARED_SESSION_ID)]);
+    await docker(["rm", "-f", sandboxIdFor(SHARED_SESSION_ID_2)]);
     await sweep({ ttlMinutes: 0 });
     // The tests build their own template images; they are not reusable.
     const images = await docker([
@@ -200,7 +205,7 @@ suite("the shared volume", () => {
 
     // The builder writes into the shared volume.
     const builder = await implementation.start(
-      context(SESSION_ID),
+      context(SHARED_SESSION_ID),
       undefined,
       artifact,
     );
@@ -220,7 +225,7 @@ suite("the shared volume", () => {
       taskId: TASK_ID,
     });
     const reader = await analyser.start(
-      context(SESSION_ID_2),
+      context(SHARED_SESSION_ID_2),
       undefined,
       artifact,
     );
@@ -245,12 +250,14 @@ suite("the shared volume", () => {
       }),
     ).rejects.toThrow();
 
-    await implementation.onSessionEnd(context(SESSION_ID), builder.state, {
+    await implementation.onSessionEnd(context(SHARED_SESSION_ID), builder.state, {
       reason: "deleted",
     });
-    await analyser.onSessionEnd(context(SESSION_ID_2), reader.state, {
-      reason: "deleted",
-    });
+    await analyser.onSessionEnd(
+      context(SHARED_SESSION_ID_2),
+      reader.state,
+      { reason: "deleted" },
+    );
 
     // With every container gone, the janitor can take the volume too.
     await sweep({ ttlMinutes: 0 });

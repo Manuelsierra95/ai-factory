@@ -387,12 +387,11 @@ export function createIaFactoryImplementation(
         await ensureVolume(volumeName, taskId);
 
         if (!(await containerExists(containerName))) {
-          await dockerOrThrow(
-            [
-              "run",
-              "-d",
-              "--name",
-              containerName,
+          const created = await docker([
+            "run",
+            "-d",
+            "--name",
+            containerName,
               ...labelArgs(
                 sandboxLabels({
                   sandboxId: containerName,
@@ -412,11 +411,20 @@ export function createIaFactoryImplementation(
               WORKSPACE_ROOT,
               "--entrypoint",
               "/bin/sh",
-              artifact.imageReference,
-              ...KEEPALIVE,
-            ],
-            `start sandbox container "${containerName}"`,
-          );
+            artifact.imageReference,
+            ...KEEPALIVE,
+          ]);
+
+          if (created.exitCode !== 0) {
+            // Another process created the same container between the check
+            // and the run. The container is the one we wanted, so the
+            // conflict is a success, not an error.
+            if (!/is already in use/iu.test(created.stderr)) {
+              throw new Error(
+                `Docker start sandbox container "${containerName}" failed (exit ${created.exitCode}): ${created.stderr.trim()}`,
+              );
+            }
+          }
         } else if (!(await containerRunning(containerName))) {
           await docker(["start", containerName]);
         }
