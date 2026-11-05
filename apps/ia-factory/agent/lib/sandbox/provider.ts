@@ -52,8 +52,16 @@ const WORKSPACE_ROOT = "/workspace";
 /** Where the shared checkout is mounted. */
 const REPO_DIR = "/workspace/repo";
 
-/** The image eve publishes, used when nothing else is configured. */
-const DEFAULT_IMAGE = "ghcr.io/vercel/eve:latest";
+/**
+ * The image eve publishes, pinned by digest.
+ *
+ * @remarks
+ * Pinned because the tag moves: the same tag served a root user in one
+ * moment and a non-root user in the next, and a sandbox that works on one
+ * machine fails on another. The digest is the contract.
+ */
+const DEFAULT_IMAGE =
+  "ghcr.io/vercel/eve@sha256:35014dfac4d298d471b523878a6cf3bf171be42a2caaf8de7aa31eb7001f1145";
 
 /** Keeps the container alive between commands. */
 const KEEPALIVE = ["-c", "sleep 2147483647"];
@@ -122,24 +130,49 @@ async function imageExists(reference: string): Promise<boolean> {
 
 /**
  * Creates the shared volume of a task, if it does not exist yet.
+ *
+ * @remarks
+ * A named volume is born owned by root, and the sandbox runs as the image's
+ * user (`vercel-sandbox`, not root). Without this the sandbox can read the
+ * checkout and cannot write to it, which looks exactly like a permissions
+ * bug and is not one.
+ *
+ * The ownership is aligned with the image's own `/workspace`, so the
+ * sandbox writes as the same user that owns the workspace everywhere else.
  */
 async function ensureVolume(
   volumeName: string,
   taskId: string,
+  image: string,
 ): Promise<void> {
   const exists = await docker(["volume", "inspect", volumeName]);
-  if (exists.exitCode === 0) {
-    return;
+  if (exists.exitCode !== 0) {
+    await dockerOrThrow(
+      [
+        "volume",
+        "create",
+        ...labelArgs(volumeLabels({ taskId, createdAt: new Date().toISOString() })),
+        volumeName,
+      ],
+      `create volume "${volumeName}"`,
+    );
   }
-  await dockerOrThrow(
-    [
-      "volume",
-      "create",
-      ...labelArgs(volumeLabels({ taskId, createdAt: new Date().toISOString() })),
-      volumeName,
-    ],
-    `create volume "${volumeName}"`,
-  );
+
+  // A one-shot root container aligns the volume's ownership with the image's
+  // workspace. It runs once, at creation, and never touches the contents.
+  await docker([
+    "run",
+    "--rm",
+    "--user",
+    "root",
+    "-v",
+    `${volumeName}:${REPO_DIR}`,
+    "--entrypoint",
+    "/bin/sh",
+    image,
+    "-c",
+    `chown --reference=/workspace ${REPO_DIR} 2>/dev/null || true`,
+  ]);
 }
 
 /**
@@ -406,7 +439,7 @@ export function createIaFactoryImplementation(
         const volumeName = volumeNameFor(taskId);
         const createdAt = new Date().toISOString();
 
-        await ensureVolume(volumeName, taskId);
+        await ensureVolume(volumeName, taskId, artifact.imageReference);
 
         if (!(await containerExists(containerName))) {
           const created = await docker([

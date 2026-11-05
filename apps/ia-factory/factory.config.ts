@@ -64,9 +64,12 @@ export default defineFactoryConfig({
   },
   sandbox: {
     provider: "docker",
-    // Pinned by digest in production. The plan's own image (Playwright
+    // Pinned by digest. The tag moves: the same tag served a root user in
+    // one moment and a non-root user in the next, and a sandbox that works
+    // on one machine fails on another. The plan's own image (Playwright
     // browsers included, no passwordless sudo) is the target.
-    image: "ghcr.io/vercel/eve:latest",
+    image:
+      "ghcr.io/vercel/eve@sha256:35014dfac4d298d471b523878a6cf3bf171be42a2caaf8de7aa31eb7001f1145",
     cpuLimit: 4,
     memoryLimitMb: 8192,
     pidsLimit: 512,
