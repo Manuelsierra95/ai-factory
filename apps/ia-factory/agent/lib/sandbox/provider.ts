@@ -1,4 +1,5 @@
 import { randomUUID } from "node:crypto";
+import type { ChildProcess } from "node:child_process";
 import { Readable } from "node:stream";
 import { once } from "node:events";
 import {
@@ -142,6 +143,21 @@ async function ensureVolume(
 }
 
 /**
+ * Collects a Docker process's stderr while it runs.
+ *
+ * @remarks
+ * The error messages of the provider are only useful if they carry what the
+ * container said: "no such file", "read-only file system" and "permission
+ * denied" are the difference between a bug and a policy. The listener has to
+ * be attached before the process closes, or the output is gone.
+ */
+function collectStderr(child: ChildProcess): { text(): string } {
+  const chunks: Buffer[] = [];
+  child.stderr?.on("data", (chunk: Buffer) => chunks.push(chunk));
+  return { text: () => Buffer.concat(chunks).toString("utf8") };
+}
+
+/**
  * The byte-level connection to one container.
  */
 function connect(containerName: string): SandboxConnection {
@@ -216,6 +232,7 @@ function connect(containerName: string): SandboxConnection {
       ]);
       const chunks: Buffer[] = [];
       child.stdout?.on("data", (chunk: Buffer) => chunks.push(chunk));
+      const stderr = collectStderr(child);
       if (signal !== undefined) {
         signal.addEventListener("abort", () => child.kill("SIGKILL"));
       }
@@ -224,7 +241,9 @@ function connect(containerName: string): SandboxConnection {
         return null;
       }
       if (code !== 0) {
-        throw new Error(`Cannot read ${path} from the sandbox.`);
+        throw new Error(
+          `Cannot read ${path} from the sandbox (exit ${code}): ${stderr.text().trim() || "no output"}`,
+        );
       }
       return new Uint8Array(Buffer.concat(chunks));
     },
@@ -242,10 +261,13 @@ function connect(containerName: string): SandboxConnection {
         if (signal !== undefined) {
           signal.addEventListener("abort", () => child.kill("SIGKILL"));
         }
+        const stderr = collectStderr(child);
         child.stdin?.end(Buffer.from(file.content).toString("base64"));
         const [code] = (await once(child, "close")) as [number | null];
         if (code !== 0) {
-          throw new Error(`Cannot write ${file.path} in the sandbox.`);
+          throw new Error(
+            `Cannot write ${file.path} in the sandbox (exit ${code}): ${stderr.text().trim() || "no output"}`,
+          );
         }
       }
     },
