@@ -9,7 +9,11 @@
     "format": "turbo format",
     "typecheck": "turbo typecheck",
     "e2e": "turbo e2e",
-    "test": "turbo test"
+    "test": "turbo test",
+    "factory:dev": "pnpm --filter @workspace/ia-factory dev",
+    "factory:build": "pnpm --filter @workspace/ia-factory build",
+    "factory:info": "pnpm --filter @workspace/ia-factory exec eve info",
+    "factory:validate": "pnpm --filter @workspace/ia-factory validate"
   },
   "devDependencies": {
     "@workspace/eslint-config": "workspace:*",

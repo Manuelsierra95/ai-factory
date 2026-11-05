@@ -50,6 +50,11 @@ next-env.d.ts
 .worktrees/
 .factory/
 
+# eve (ia-factory)
+apps/ia-factory/.eve/
+apps/ia-factory/.output/
+apps/ia-factory/.vercel/
+
 # playwright
 test-results/
 playwright-report/

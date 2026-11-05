@@ -1,0 +1,61 @@
+import { defineTool } from "eve/tools";
+import { z } from "zod";
+import { resolveGitHubToken } from "../../../lib/github/credentials.js";
+import {
+  gitAuthEnv,
+  remoteUrl,
+  REPO_DIR,
+  validateBranch,
+} from "../../../lib/github/git-remote.js";
+import { environment } from "../sandbox.js";
+
+/**
+ * Fetches an existing factory branch and checks it out in the sandbox, for
+ * revision runs that continue work the reviewer sent back.
+ *
+ * @remarks
+ * The fetch targets the factory repository's URL literally, with the
+ * credential carried by the command's environment and scoped to
+ * `github.com`. `validateBranch` bounds what can be interpolated into the
+ * git command line.
+ */
+export default defineTool({
+  description: `Fetch an existing branch of the factory repository and check it out in ${REPO_DIR}. Use this on a revision run, when the reviewer's findings name a branch that already exists; fresh work starts from the default branch with plain git instead.`,
+  async execute(input, ctx) {
+    const refusal = validateBranch(input.branch);
+    if (refusal) {
+      return { error: refusal, success: false as const };
+    }
+    const sandbox = await ctx.getSandbox(environment);
+    const authEnv = gitAuthEnv(await resolveGitHubToken());
+
+    const fetch = await sandbox.run({
+      env: authEnv,
+      command: `git -C ${REPO_DIR} fetch ${remoteUrl()} '${input.branch}' && git -C ${REPO_DIR} checkout -B '${input.branch}' FETCH_HEAD`,
+    });
+    if (fetch.exitCode !== 0) {
+      return {
+        error: `git fetch/checkout exited ${fetch.exitCode}: ${String(
+          fetch.stderr || fetch.stdout,
+        ).trim()}`,
+        success: false as const,
+      };
+    }
+
+    const head = await sandbox.run({
+      env: authEnv,
+      command: `git -C ${REPO_DIR} rev-parse HEAD`,
+    });
+    return {
+      branch: input.branch,
+      sha: String(head.stdout).trim(),
+      success: true as const,
+    };
+  },
+  inputSchema: z.object({
+    branch: z
+      .string()
+      .min(1)
+      .describe("The existing branch to fetch and check out."),
+  }),
+});

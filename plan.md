@@ -28,6 +28,7 @@
 | v0.3 | 2026-11-05 | Capa de skills desde rsc-harness; `idea-refinement`, `clarify`, `analyze`, `decision-challenge`, `decision-records`, `constitution`; estados `REFINING`/`CHALLENGING`/`COMPACTING`; fases ampliadas; D18–D21 |
 | v0.4 | 2026-11-05 | Iteración continua (§3.6), eliminación de los modos, `Spec` como documento vivo, desafío de dirección (§11.5), `## Decisiones autónomas`, `maxIterations`, `ia-factory continue`; D22–D24 |
 | **v0.5** | **2026-11-05** | **Correcciones tras verificar el plan contra eve, rsc-harness, OKF y el repo real.**  · **eve `1.0.0-rc.5`** (con la lista de migraciones desde `0.67.2`) · **Zod como fuente de verdad** de los contratos, puente `z.toJSONSchema()` · **e2e (Playwright)** como suite del repo destino, con contrato AC→título de test y `verify_tdd` por `--grep` · **Skills: `sdd` no existe** → `asdd` (sucesor renombrado); `sdd-init`, `plan`, `tasks` y `ftd` añadidos (34 en total); **`sdd-spec`/`tdd-workflow`/`okf-brain` no vienen del template** → se escriben 2 y `sdd-spec` se sustituye por `asdd` · **Sandbox: volumen compartido read-only** (D29) · **Desafío de decisión ejecutado en `run_gatekeeper.ts`** (D28) · **OKF v0.2** canónica: `generated: {by, at}`, `status: draft\|stable\|deprecated` (D31) · **Linter/TS unificados** en eslint+prettier+TS5+turbo (D26) · **Fase 0.5 (Fundación)** nueva: runner e2e, CI, contrato de checks, remote de GitHub · Side effects de git/BRAIN en **`"use step"`** (regla de eve) · Correcciones de contradicciones internas (lane/idea, `GATEKEEPING → ITERATING`, typo de sección, árbol duplicado, Fase 0 sin `vercel link`, `agent/sandbox/sandbox.ts`) · Decisiones **D25–D31** cerradas |
+| **v0.7** | **2026-11-05** | **Fase 0 ejecutada.** · App `apps/ia-factory` sobre **eve `1.0.0-rc.5`**: migración de la API (compaction `threshold`, `limits.sessionUsage`, `defineInstructions({content})`, `ctx.agent().send().result()`), `modelContextWindowTokens` por estación (las instancias de proveedor directo no están en el catálogo del Gateway) · **Sandbox Docker local** (provider de eve) en lugar de Vercel Sandbox; credencial GitHub por **env de comando** (`GIT_CONFIG_*`), nunca en la línea de comandos ni en la imagen · **Fuera Vercel Connect**: credenciales propias (PAT o GitHub App con installation token) · **Fuera la extensión `@github-tools/eve-extension`** (importa `@vercel/connect` de forma dura): Fase 6 escribe un cliente REST propio · `FACTORY_REPO` se resuelve en el uso, no al cargar el módulo, para que `eve build`/`eve info` funcionen sin entorno · `factory.config.ts` con el contrato de `checks` (D37: instalación por sesión) · Plantilla de skills: solo `writing-quality` (el resto llega en Fase 2) · **Desviación de la §5**: las estaciones del template siguen vivas hasta la Fase 3-5 |
 | **v0.6** | **2026-11-05** | **Cierre de D34–D37 y repo de destino.** · **Repo:** <https://github.com/Manuelsierra95/ai-factory> · **D34:** Playwright con **solo `chromium`** headless · **D35:** los tests e2e viven en **`packages/tests/`** (workspace `@workspace/tests`), no en `e2e/` raíz · **D36:** los analysers UI/UX **reutilizan la misma instalación y el mismo `webServer`** · **D37:** la instalación (`pnpm install`) es **por sesión**, en el volumen compartido (`checks.setup`), nunca en `prepare` |
 
 ---
@@ -48,6 +49,14 @@ Construir una **fábrica de software con IA** dentro del monorepo, como app `app
 | Agentes | Orquestador raíz + subagentes declarados en eve para cada caja del diagrama |
 | BRAIN | Wiki OKF v0.2 en `docs/`, versionada en git, leída y escrita por la fábrica y leída también por las sesiones interactivas del IDE |
 | Salida | Push fast-forward a `main` (baja complejidad) o PR para revisión humana (alta complejidad) |
+
+### 1.1.1 Estado de la implementación (2026-11-05)
+
+| Fase | Estado |
+|---|---|
+| **Fase 0.5** | **Hecha.** Suite e2e (Playwright, solo chromium) en `packages/tests` con el contrato `AC-<n> · <descripción>`; CI (lint + typecheck + e2e); remote de GitHub publicado; lint/TS unificados (eslint + prettier + TS 5 + turbo) |
+| **Fase 0** | **Hecha en lo estructural.** App en `apps/ia-factory` sobre eve `1.0.0-rc.5`, compilada, con sandbox Docker local, credenciales propias y `factory.config.ts`. **Pendiente**: provider Docker propio con labels/TTL/janitor/volumen compartido (D29), imagen del sandbox con Playwright y sin sudo, y `pnpm factory:up` |
+| Fases 1-7 | Pendientes |
 
 ### 1.2 Fuera de alcance (v1)
 
@@ -402,7 +411,7 @@ El cuerpo de un workflow tool **se re-ejecuta en cada replay** y debe ser determ
 | `agent/channels/linear.ts`, `agent/connections/linear.ts` | Eliminar | Fuera de alcance |
 | `agent/channels/eve.ts` | Conservar | `localDevUser` para la TUI |
 | `agent/channels/mcp.ts` | **Nuevo** | Entrada desde IDEs y CLI |
-| `agent/extensions/github.ts` | Reducir | Allowlist: lecturas + `createPullRequest`. Sin merge |
+| `agent/extensions/github.ts` | **Eliminar** (Fase 0) | La extensión `@github-tools/eve-extension` importa `@vercel/connect` de forma dura, y la fábrica no usa Vercel Connect. La Fase 6 escribe tools propias sobre la API REST de GitHub: `github_create_pull_request`, `github_get_pull_request`, `github_add_pull_request_comment` |
 | Modelos vía AI Gateway (ids `vendor/modelo`, auth OIDC) | **Sustituir** | Objetos de proveedor AI SDK con API keys propias (§8.9) |
 | `agent/sandbox.ts`, `subagents/*/sandbox.ts` | Adaptar | Provider Docker custom que clona `FACTORY_REPO` y limpia al terminar |
 | `subagents/classifier` | Fusionar en `spec_writer` | El triage y la elección de carril forman parte de la spec |
