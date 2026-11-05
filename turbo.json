@@ -19,6 +19,12 @@
     "dev": {
       "cache": false,
       "persistent": true
+    },
+    "e2e": {
+      "cache": false
+    },
+    "test": {
+      "cache": false
     }
   }
 }
