@@ -14,8 +14,8 @@ import {
   MANAGED_LABEL,
   ROLE_LABEL,
   SANDBOX_LABEL,
+  SCOPE_LABEL,
   SESSION_LABEL,
-  TASK_LABEL,
   CREATED_AT_LABEL,
   VOLUME_LABEL,
   sandboxIdFor,
@@ -23,7 +23,7 @@ import {
   volumeLabels,
   volumeNameFor,
 } from "./labels.js";
-import { heartbeat, readTask } from "./registry.js";
+import { heartbeat, markScopeTerminal, readScope } from "./registry.js";
 import { sweep } from "./janitor.js";
 import { removeContainer, removeVolume } from "./janitor.js";
 
@@ -75,21 +75,24 @@ export interface IaFactorySandboxOptions {
    * Whether the shared checkout is writable here. Only the builder writes.
    */
   readonly volumeMode?: "ro" | "rw";
-  /** Task id override, for tests. */
-  readonly taskId?: string;
 }
 
 /**
- * The task a sandbox belongs to.
+ * The scope a sandbox belongs to.
  *
  * @remarks
- * The pipeline sets `FACTORY_TASK_ID` for every station of a task, which is
- * what makes them share one checkout. Without it, a sandbox gets its own
- * volume, which is the safe default: two unrelated tasks never share a
- * working directory.
+ * The scope is the root of the dispatch chain: the session the developer
+ * talks to. Every station of a task is a descendant of it, and eve populates
+ * `parent.rootSessionId` at dispatch, so all the stations of a task resolve
+ * to the same scope without passing anything around.
+ *
+ * That is what makes the shared checkout work. The alternatives are worse:
+ * an environment variable is process-global and two tasks running at the
+ * same time would fight over it, and a task id in the message would have to
+ * be threaded through every station by hand.
  */
-function taskIdFor(sessionId: string, override?: string): string {
-  return override ?? process.env.FACTORY_TASK_ID ?? `session-${sessionId}`;
+function scopeFor(ctx: { session: { id: string; parent?: { rootSessionId: string } } }): string {
+  return ctx.session.parent?.rootSessionId ?? ctx.session.id;
 }
 
 /**
@@ -142,7 +145,7 @@ async function imageExists(reference: string): Promise<boolean> {
  */
 async function ensureVolume(
   volumeName: string,
-  taskId: string,
+  scope: string,
   image: string,
 ): Promise<void> {
   const exists = await docker(["volume", "inspect", volumeName]);
@@ -151,7 +154,7 @@ async function ensureVolume(
       [
         "volume",
         "create",
-        ...labelArgs(volumeLabels({ taskId, createdAt: new Date().toISOString() })),
+        ...labelArgs(volumeLabels({ scope, createdAt: new Date().toISOString() })),
         volumeName,
       ],
       `create volume "${volumeName}"`,
@@ -335,7 +338,7 @@ interface IaFactoryState {
   readonly [key: string]: string | number;
   readonly containerName: string;
   readonly volumeName: string;
-  readonly taskId: string;
+  readonly scope: string;
   readonly version: number;
 }
 
@@ -435,11 +438,11 @@ export function createIaFactoryImplementation(
         ensureJanitor();
         const sessionId = ctx.session.id;
         const containerName = sandboxIdFor(sessionId);
-        const taskId = taskIdFor(sessionId, options.taskId);
-        const volumeName = volumeNameFor(taskId);
+        const scope = scopeFor(ctx);
+        const volumeName = volumeNameFor(scope);
         const createdAt = new Date().toISOString();
 
-        await ensureVolume(volumeName, taskId, artifact.imageReference);
+        await ensureVolume(volumeName, scope, artifact.imageReference);
 
         if (!(await containerExists(containerName))) {
           const created = await docker([
@@ -451,7 +454,7 @@ export function createIaFactoryImplementation(
                 sandboxLabels({
                   sandboxId: containerName,
                   sessionId,
-                  taskId,
+                  scope,
                   role,
                   createdAt,
                   volume: volumeName,
@@ -484,11 +487,11 @@ export function createIaFactoryImplementation(
           await docker(["start", containerName]);
         }
 
-        await heartbeat(taskId, containerName);
+        await heartbeat(scope, containerName);
 
         return {
           connection: connect(containerName),
-          state: { containerName, volumeName, taskId, version: 1 },
+          state: { containerName, volumeName, scope, version: 1 },
         };
       },
 
@@ -501,7 +504,7 @@ export function createIaFactoryImplementation(
         if (!(await containerRunning(state.containerName))) {
           await docker(["start", state.containerName]);
         }
-        await heartbeat(state.taskId, state.containerName);
+        await heartbeat(state.scope, state.containerName);
         return connect(state.containerName);
       },
 
@@ -514,13 +517,23 @@ export function createIaFactoryImplementation(
           );
         }
 
-        // The volume belongs to the task, not to the session: it survives
-        // while the task works and goes when the task is over.
-        const taskId = state?.taskId ?? taskIdFor(ctx.session.id, options.taskId);
-        const record = await readTask(taskId);
-      if (record !== null && record.status !== "running" && record.status !== "iterating") {
-        await removeVolume(state?.volumeName ?? volumeNameFor(taskId));
-      }
+        // The root session is the task: when it ends, the scope is over and
+        // nothing else will open a sandbox for it.
+        const scope = state?.scope ?? scopeFor(ctx);
+        if (ctx.session.parent === undefined) {
+          await markScopeTerminal(scope);
+        }
+
+        // The volume belongs to the scope, not to the session: it survives
+        // while the scope works and goes when the scope is over.
+        const record = await readScope(scope);
+        if (
+          record !== null &&
+          record.status !== "running" &&
+          record.status !== "iterating"
+        ) {
+          await removeVolume(state?.volumeName ?? volumeNameFor(scope));
+        }
     },
   };
 }
@@ -540,4 +553,11 @@ export const IaFactorySandbox = defineSandboxProvider<
   environment: (options) => createIaFactoryImplementation(options),
 });
 
-export { MANAGED_LABEL, SANDBOX_LABEL, SESSION_LABEL, TASK_LABEL, VOLUME_LABEL, removeContainer };
+export {
+  MANAGED_LABEL,
+  SANDBOX_LABEL,
+  SCOPE_LABEL,
+  SESSION_LABEL,
+  VOLUME_LABEL,
+  removeContainer,
+};

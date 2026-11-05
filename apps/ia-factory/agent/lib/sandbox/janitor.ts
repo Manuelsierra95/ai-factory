@@ -4,9 +4,9 @@ import {
   MANAGED_LABEL,
   ROLE_LABEL,
   SANDBOX_LABEL,
-  TASK_LABEL,
+  SCOPE_LABEL,
 } from "./labels.js";
-import { listTasks, TERMINAL_STATUSES, type TaskRecord } from "./registry.js";
+import { listScopes, TERMINAL_STATUSES, type ScopeRecord } from "./registry.js";
 
 /**
  * The sweeper that removes what the factory left behind.
@@ -118,35 +118,39 @@ async function listManagedVolumes(): Promise<DockerResource[]> {
 }
 
 /**
- * Whether a task is still working.
+ * Whether a scope is still working.
  */
-function isTaskAlive(record: TaskRecord | null): boolean {
+function isScopeAlive(record: ScopeRecord | null): boolean {
   if (record === null) {
     return false;
   }
-  if (TERMINAL_STATUSES.includes(record.status)) {
-    return false;
-  }
-  return true;
+  return !TERMINAL_STATUSES.includes(record.status);
 }
 
 /**
  * Whether a resource outlived its TTL.
+ *
+ * @remarks
+ * The clock is the scope's heartbeat when there is one, and the resource's
+ * own creation date otherwise. The heartbeat is the honest clock: a task
+ * that has been working for six hours is alive, even though its first
+ * container is six hours old.
  */
 function isExpired(
   labels: Readonly<Record<string, string>>,
-  record: TaskRecord | null,
+  record: ScopeRecord | null,
   ttlMs: number,
 ): boolean {
-  if (!isTaskAlive(record)) {
+  if (!isScopeAlive(record)) {
     return true;
   }
-  const createdAt = labels[CREATED_AT_LABEL];
-  if (createdAt === undefined) {
+  const lastSeen =
+    record?.lastHeartbeatAt ?? labels[CREATED_AT_LABEL];
+  if (lastSeen === undefined) {
     // A factory resource with no timestamp is a bug, not a reason to keep it.
     return true;
   }
-  const age = Date.now() - new Date(createdAt).getTime();
+  const age = Date.now() - new Date(lastSeen).getTime();
   return Number.isFinite(age) && age > ttlMs;
 }
 
@@ -179,15 +183,17 @@ export async function sweep(
   options: JanitorOptions,
 ): Promise<JanitorReport> {
   const ttlMs = options.ttlMinutes * 60_000;
-  const tasks = new Map((await listTasks()).map((record) => [record.taskId, record]));
+  const scopes = new Map(
+    (await listScopes()).map((record) => [record.scopeId, record]),
+  );
 
   const removedContainers: string[] = [];
   const removedVolumes: string[] = [];
   const failed: string[] = [];
 
   for (const container of await listManagedContainers()) {
-    const taskId = container.labels[TASK_LABEL];
-    const record = taskId === undefined ? null : (tasks.get(taskId) ?? null);
+    const scope = container.labels[SCOPE_LABEL];
+    const record = scope === undefined ? null : (scopes.get(scope) ?? null);
     if (!isExpired(container.labels, record, ttlMs)) {
       continue;
     }
@@ -200,8 +206,8 @@ export async function sweep(
   }
 
   for (const volume of await listManagedVolumes()) {
-    const taskId = volume.labels[TASK_LABEL];
-    const record = taskId === undefined ? null : (tasks.get(taskId) ?? null);
+    const scope = volume.labels[SCOPE_LABEL];
+    const record = scope === undefined ? null : (scopes.get(scope) ?? null);
     if (!isExpired(volume.labels, record, ttlMs)) {
       continue;
     }

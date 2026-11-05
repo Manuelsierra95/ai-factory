@@ -3,6 +3,7 @@ import { createIaFactoryImplementation } from "./provider.js";
 import { docker } from "./docker-cli.js";
 import { MANAGED_LABEL, sandboxIdFor } from "./labels.js";
 import { sweep } from "./janitor.js";
+import { readScope } from "./registry.js";
 
 /**
  * The provider talks to a real Docker daemon.
@@ -17,7 +18,16 @@ import { sweep } from "./janitor.js";
  * on a machine without it.
  */
 
-const TASK_ID = `test-${Date.now()}`;
+/**
+ * The root of a dispatch chain.
+ *
+ * @remarks
+ * Every station of a task is a descendant of the session the developer
+ * talks to, and eve populates `parent.rootSessionId` at dispatch. That is
+ * how two stations find the same shared checkout without passing anything
+ * around.
+ */
+const ROOT_SESSION_ID = `test-root-${Date.now()}`;
 const SESSION_ID = `test-session-${Date.now()}`;
 /** A second station of the same task: it must see the first one's work. */
 const SESSION_ID_2 = `test-session-2-${Date.now()}`;
@@ -58,7 +68,6 @@ suite("the Docker sandbox provider", () => {
     const environment = createIaFactoryImplementation({
       role: "builder",
       volumeMode: "rw",
-      taskId: TASK_ID,
     });
 
     const artifact = await environment.prepare({
@@ -79,7 +88,7 @@ suite("the Docker sandbox provider", () => {
 
     const { connection, state } = await environment.start(
       {
-        session: { id: SESSION_ID },
+        session: { id: SESSION_ID, parent: { rootSessionId: ROOT_SESSION_ID } },
         kind: "session",
         storagePath: "/tmp/ia-factory-test",
         resolveProjectPath: (path: string) => path,
@@ -100,7 +109,7 @@ suite("the Docker sandbox provider", () => {
     expect(inspected.exitCode).toBe(0);
     const labels = JSON.parse(inspected.stdout.trim()) as Record<string, string>;
     expect(labels[MANAGED_LABEL]).toBe("true");
-    expect(labels["ia-factory.task-id"]).toBe(TASK_ID);
+    expect(labels["ia-factory.scope-id"]).toBe(ROOT_SESSION_ID);
 
     // Commands run, and their output comes back.
     const run = await connection.spawn({
@@ -135,7 +144,7 @@ suite("the Docker sandbox provider", () => {
     // Cleanup removes the container and is safe to repeat.
     await environment.onSessionEnd(
       {
-        session: { id: SESSION_ID },
+        session: { id: SESSION_ID, parent: { rootSessionId: ROOT_SESSION_ID } },
         kind: "session",
         storagePath: "/tmp/ia-factory-test",
         resolveProjectPath: (path: string) => path,
@@ -177,7 +186,6 @@ suite("the shared volume", () => {
     const implementation = createIaFactoryImplementation({
       role: "builder",
       volumeMode: "rw",
-      taskId: TASK_ID,
     });
 
     const artifact = await implementation.prepare({
@@ -195,9 +203,9 @@ suite("the shared volume", () => {
       templateKey: () => `test-shared-${Date.now()}`,
     } as never);
 
-    const context = (sessionId: string) =>
+    const context = (sessionId: string, rootSessionId = ROOT_SESSION_ID) =>
       ({
-        session: { id: sessionId },
+        session: { id: sessionId, parent: { rootSessionId } },
         kind: "session",
         storagePath: "/tmp/ia-factory-test",
         resolveProjectPath: (path: string) => path,
@@ -222,7 +230,6 @@ suite("the shared volume", () => {
     const analyser = createIaFactoryImplementation({
       role: "analyser",
       volumeMode: "ro",
-      taskId: TASK_ID,
     });
     const reader = await analyser.start(
       context(SHARED_SESSION_ID_2),
@@ -261,5 +268,129 @@ suite("the shared volume", () => {
 
     // With every container gone, the janitor can take the volume too.
     await sweep({ ttlMinutes: 0 });
+  });
+});
+
+suite("scope isolation", () => {
+  it("gives two different tasks two different volumes", async () => {
+    const implementation = createIaFactoryImplementation({
+      role: "builder",
+      volumeMode: "rw",
+    });
+
+    const artifact = await implementation.prepare({
+      isEmpty: true,
+      storagePath: "/tmp/ia-factory-test",
+      files: {
+        list: async () => [],
+        read: async () => new Uint8Array(),
+        readText: async () => "",
+      },
+      log: () => undefined,
+      populate: async () => undefined,
+      resolveProjectPath: (path: string) => path,
+      resourcesDirectory: async () => undefined,
+      templateKey: () => `test-isolation-${Date.now()}`,
+    } as never);
+
+    const context = (sessionId: string, rootSessionId: string) =>
+      ({
+        session: { id: sessionId, parent: { rootSessionId } },
+        kind: "session",
+        storagePath: "/tmp/ia-factory-test",
+        resolveProjectPath: (path: string) => path,
+      }) as never;
+
+    const otherRoot = `test-root-other-${Date.now()}`;
+    const otherSession = `test-session-other-${Date.now()}`;
+
+    const first = await implementation.start(
+      context(`test-session-a-${Date.now()}`, ROOT_SESSION_ID),
+      undefined,
+      artifact,
+    );
+    const second = await implementation.start(
+      context(otherSession, otherRoot),
+      undefined,
+      artifact,
+    );
+
+    // Two tasks, two volumes: one task's checkout is never visible to another.
+    expect(second.state.volumeName).not.toBe(first.state.volumeName);
+
+    await implementation.onSessionEnd(
+      context(`test-session-a-${Date.now()}`, ROOT_SESSION_ID),
+      first.state,
+      { reason: "deleted" },
+    );
+    await implementation.onSessionEnd(
+      context(otherSession, otherRoot),
+      second.state,
+      { reason: "deleted" },
+    );
+    await sweep({ ttlMinutes: 0 });
+  });
+});
+
+suite("the janitor", () => {
+  it("takes the volume when the root session ends, without waiting for the TTL", async () => {
+    const implementation = createIaFactoryImplementation({
+      role: "builder",
+      volumeMode: "rw",
+    });
+
+    const artifact = await implementation.prepare({
+      isEmpty: true,
+      storagePath: "/tmp/ia-factory-test",
+      files: {
+        list: async () => [],
+        read: async () => new Uint8Array(),
+        readText: async () => "",
+      },
+      log: () => undefined,
+      populate: async () => undefined,
+      resolveProjectPath: (path: string) => path,
+      resourcesDirectory: async () => undefined,
+      templateKey: () => `test-janitor-${Date.now()}`,
+    } as never);
+
+    // A root session: no parent. It is the task.
+    const rootSessionId = `test-root-janitor-${Date.now()}`;
+    const rootContext = {
+      session: { id: rootSessionId },
+      kind: "session",
+      storagePath: "/tmp/ia-factory-test",
+      resolveProjectPath: (path: string) => path,
+    } as never;
+
+    const root = await implementation.start(
+      rootContext,
+      undefined,
+      artifact,
+    );
+
+    // The scope is alive: the janitor leaves it alone, whatever the TTL.
+    expect(await readScope(rootSessionId)).not.toBeNull();
+    expect((await readScope(rootSessionId))?.status).toBe("running");
+
+    // The root session ends: the scope is over.
+    await implementation.onSessionEnd(rootContext, root.state, {
+      reason: "completed",
+    });
+    expect((await readScope(rootSessionId))?.status).toBe("completed");
+
+    // And the volume goes with it, without waiting for the TTL.
+    const volumes = await docker([
+      "volume",
+      "ls",
+      "-q",
+      "--filter",
+      `name=${root.state.volumeName}`,
+    ]);
+    expect(volumes.stdout.trim()).toBe("");
+
+    // The janitor agrees: the scope is over, so there is nothing left.
+    const report = await sweep({ ttlMinutes: 60 });
+    expect(report.failed).toEqual([]);
   });
 });

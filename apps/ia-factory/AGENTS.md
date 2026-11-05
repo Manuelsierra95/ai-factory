@@ -43,8 +43,8 @@ Everything under `agent/lib/sandbox/` is the factory's own provider, not eve's b
 - **The container name comes from the session id alone.** Two callers that open the same session reach the same container.
 - **Every resource carries `ia-factory.managed=true`.** The janitor only ever touches resources with that label, so it can never remove somebody else's container on the same machine.
 - **The shared volume belongs to the task.** The builder mounts it writable and clones into it; every other station mounts it read-only, so an analyst cannot edit the diff it is judging. One clone and one install per task.
-- **The task id arrives through `FACTORY_TASK_ID`.** The pipeline sets it for every station of the same task. Without it, each sandbox gets its own volume, which is the safe default.
-- **The heartbeat lives in `.factory/tasks/<taskId>.json`,** not in a label: Docker labels are immutable.
+- **The scope is the root of the dispatch chain.** `ctx.session.parent?.rootSessionId` names the session the developer talks to, and every station of a task is a descendant of it. The sandbox layer needs no task id passed around: the stations find the same shared checkout on their own. Two different roots get two different volumes, so one task never sees another's checkout.
+- **The heartbeat lives in `.factory/scopes/<scopeId>.json`,** not in a label: Docker labels are immutable. The scope's status is `running` while it works and terminal when the root session ends; the janitor sweeps by that status, and the TTL is only the backstop.
 - **Commands travel in the environment, not in the argument list.** `IAF_COMMAND` plus an `exec -a "iaf-exec-$IAF_EXEC_TOKEN"` wrapper, so `kill` can reach the process inside the container and no quoting rule can change what the command means.
 - **The GitHub credential never enters the container.** It is the environment of the one git command that needs it, scoped to `github.com` by git's own config.
 
